@@ -145,11 +145,11 @@ export class KeyStore<Collector extends KeyCollector = KeyCollector> {
 
   private async getCachedKey(token: string, header: jose.JWTHeaderParameters): Promise<KeySpec> {
     const kid = header.kid;
-    const { keys, keymap, errors } = await this.collector.getKeys();
+    const { keys, errors, getKeyById } = await this.collector.getKeys();
     if (kid) {
       // key has kid: JWK with exact kid, or JWK without kid
       // key without kid: JWK without kid only
-      const key = keymap[kid];
+      const key = getKeyById(kid);
       if (key) {
         if (!key.matchesAlgorithm(header.alg)) {
           throw new AuthorizationError(ErrorCode.PSYNC_S2101, `Unexpected token algorithm ${header.alg}`, {

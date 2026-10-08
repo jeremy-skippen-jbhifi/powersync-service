@@ -15,17 +15,29 @@ export class CompoundKeyCollector implements KeyCollector {
 
   async getKeys(): Promise<KeyResult> {
     const keys: KeySpec[] = [];
-    let keymap: Record<string, KeySpec> = {};
+    const getKeyByIdFns: Array<(kid: string) => KeySpec | undefined> = [];
     const errors: AuthorizationError[] = [];
     const promises = this.collectors.map((collector) =>
       collector.getKeys().then((result) => {
         keys.push(...result.keys);
-        keymap = { ...keymap, ...result.keymap };
+        getKeyByIdFns.push(result.getKeyById);
         errors.push(...result.errors);
       })
     );
     await Promise.all(promises);
-    return { keys, keymap, errors };
+    return {
+      errors,
+      keys,
+      getKeyById(kid) {
+        for (let fn of getKeyByIdFns) {
+          const key = fn(kid);
+          if (key) {
+            return key;
+          }
+        }
+        return undefined;
+      }
+    };
   }
 
   async noKeyFound(): Promise<void> {

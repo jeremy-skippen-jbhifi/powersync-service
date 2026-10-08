@@ -19,7 +19,7 @@ export const SUPABASE_KEY_OPTIONS: KeyOptions = {
  */
 export class StaticSupabaseKeyCollector implements KeyCollector {
   private keys: KeySpec[] = [];
-  private keymap: Record<string, KeySpec> = {};
+  private keymap: Map<string, KeySpec> = new Map();
 
   static async importKeys(keys: jose.JWK[]) {
     const parsedKeys = await Promise.all(keys.map((key) => KeySpec.importKey(key, SUPABASE_KEY_OPTIONS)));
@@ -29,7 +29,7 @@ export class StaticSupabaseKeyCollector implements KeyCollector {
   constructor(keys: KeySpec[]) {
     for (let key of keys) {
       if (typeof key.kid === 'string') {
-        this.keymap[key.kid] = key;
+        this.keymap.set(key.kid, key);
       } else {
         this.keys.push(key);
       }
@@ -37,6 +37,6 @@ export class StaticSupabaseKeyCollector implements KeyCollector {
   }
 
   async getKeys(): Promise<KeyResult> {
-    return { keys: this.keys, keymap: this.keymap, errors: [] };
+    return { keys: this.keys, getKeyById: Map.prototype.get.bind(this.keymap), errors: [] };
   }
 }

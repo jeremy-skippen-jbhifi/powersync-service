@@ -5,6 +5,8 @@ import { KeySpec } from './KeySpec.js';
 import { LeakyBucket } from './LeakyBucket.js';
 import { mapAuthConfigError } from './utils.js';
 
+const nullGetKeyByIdFn: (kid: string) => KeySpec | undefined = () => undefined;
+
 /**
  * Manages caching and refreshing for a key collector.
  *
@@ -18,7 +20,7 @@ import { mapAuthConfigError } from './utils.js';
 
 export class CachedKeyCollector implements KeyCollector {
   private currentKeys: KeySpec[] = [];
-  private currentKeymap: Record<string, KeySpec> = {};
+  private currentGetKeyByIdFn: (kid: string) => KeySpec | undefined = nullGetKeyByIdFn;
   /**
    * The time that currentKeys was set.
    */
@@ -56,7 +58,7 @@ export class CachedKeyCollector implements KeyCollector {
     if (now - this.keyTimestamp > this.keyExpiry) {
       // Keys have expired - clear
       this.currentKeys = [];
-      this.currentKeymap = {};
+      this.currentGetKeyByIdFn = nullGetKeyByIdFn;
     }
 
     if (this.wantsRefresh()) {
@@ -81,14 +83,14 @@ export class CachedKeyCollector implements KeyCollector {
         await Promise.race([this.refreshPromise, timeout]);
       } catch (e) {
         if (e instanceof AuthorizationError) {
-          return { keys: this.currentKeys, keymap: this.currentKeymap, errors: [...this.currentErrors, e] };
+          return { keys: this.currentKeys, getKeyById: this.currentGetKeyByIdFn, errors: [...this.currentErrors, e] };
         } else {
           throw e;
         }
       }
     }
 
-    return { keys: this.currentKeys, keymap: this.currentKeymap, errors: this.currentErrors };
+    return { keys: this.currentKeys, getKeyById: this.currentGetKeyByIdFn, errors: this.currentErrors };
   }
 
   private refresh() {
@@ -110,10 +112,10 @@ export class CachedKeyCollector implements KeyCollector {
 
   private async refreshInner() {
     try {
-      const { keys, keymap, errors } = await this.source.getKeys();
+      const { keys, getKeyById, errors } = await this.source.getKeys();
       // Partial or full result
       this.currentKeys = keys;
-      this.currentKeymap = keymap;
+      this.currentGetKeyByIdFn = getKeyById;
       this.currentErrors = errors;
       this.keyTimestamp = Date.now();
       this.error = false;

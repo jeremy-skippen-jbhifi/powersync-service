@@ -100,7 +100,7 @@ export class RemoteJWKSCollector implements KeyCollector {
     ) {
       return {
         keys: [],
-        keymap: {},
+        getKeyById: () => undefined,
         errors: [
           new AuthorizationError(ErrorCode.PSYNC_S2204, `Invalid JWKS response`, {
             configurationDetails: `JWKS URL: ${this.url}. Response:\n${JSON.stringify(data, null, 2)}`
@@ -110,7 +110,7 @@ export class RemoteJWKSCollector implements KeyCollector {
     }
 
     const keys: KeySpec[] = [];
-    const keymap: Record<string, KeySpec> = {};
+    const keymap: Map<string, KeySpec> = new Map();
     for (let keyData of data.keys) {
       if (keyData.kty != 'RSA' && keyData.kty != 'OKP' && keyData.kty != 'EC') {
         // HS (oct) keys not allowed because they are symmetric
@@ -130,13 +130,17 @@ export class RemoteJWKSCollector implements KeyCollector {
 
       const key = await KeySpec.importKey(keyData, this.keyOptions);
       if (typeof key.kid === 'string') {
-        keymap[key.kid] = key;
+        keymap.set(key.kid, key);
       } else {
         keys.push(key);
       }
     }
 
-    return { keys, keymap, errors: [] };
+    return {
+      keys,
+      getKeyById: Map.prototype.get.bind(keymap),
+      errors: []
+    };
   }
 
   /**
