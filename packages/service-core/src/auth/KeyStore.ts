@@ -145,29 +145,24 @@ export class KeyStore<Collector extends KeyCollector = KeyCollector> {
 
   private async getCachedKey(token: string, header: jose.JWTHeaderParameters): Promise<KeySpec> {
     const kid = header.kid;
-    const { keys, errors } = await this.collector.getKeys();
+    const { keys, keymap, errors } = await this.collector.getKeys();
     if (kid) {
       // key has kid: JWK with exact kid, or JWK without kid
       // key without kid: JWK without kid only
-      for (let key of keys) {
-        if (key.kid == kid) {
-          if (!key.matchesAlgorithm(header.alg)) {
-            throw new AuthorizationError(ErrorCode.PSYNC_S2101, `Unexpected token algorithm ${header.alg}`, {
-              configurationDetails: `Key kid: ${key.source.kid}, alg: ${key.source.alg}, kty: ${key.source.kty}`
-              // tokenDetails automatically populated higher up the stack
-            });
-          }
-          return key;
+      const key = keymap[kid];
+      if (key) {
+        if (!key.matchesAlgorithm(header.alg)) {
+          throw new AuthorizationError(ErrorCode.PSYNC_S2101, `Unexpected token algorithm ${header.alg}`, {
+            configurationDetails: `Key kid: ${key.source.kid}, alg: ${key.source.alg}, kty: ${key.source.kty}`
+            // tokenDetails automatically populated higher up the stack
+          });
         }
+        return key;
       }
     }
 
     for (let key of keys) {
       // Checks signature and algorithm
-      if (key.kid != null) {
-        // Not a wildcard key
-        continue;
-      }
       if (!key.matchesAlgorithm(header.alg)) {
         continue;
       }

@@ -463,9 +463,9 @@ describe('JWT Auth', () => {
     const remote = new RemoteJWKSCollector(
       'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com'
     );
-    const { keys, errors } = await remote.getKeys();
+    const { keys, keymap, errors } = await remote.getKeys();
     expect(errors).toEqual([]);
-    expect(keys.length).toBeGreaterThanOrEqual(1);
+    expect([...keys, ...Object.values(keymap)].length).toBeGreaterThanOrEqual(1);
 
     // Domain names are resolved when retrieving keys
     const invalid = new RemoteJWKSCollector('https://localhost/.well-known/jwks.json', {
@@ -503,9 +503,9 @@ describe('JWT Auth', () => {
     const remote = new RemoteJWKSCollector(
       'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com'
     );
-    const { keys, errors } = await remote.getKeys();
+    const { keys, keymap, errors } = await remote.getKeys();
     expect(errors).toEqual([]);
-    expect(keys.length).toBeGreaterThanOrEqual(1);
+    expect([...keys, Object.values(keymap)].length).toBeGreaterThanOrEqual(1);
 
     const invalid = new RemoteJWKSCollector('https://127.0.0.1/.well-known/jwks.json');
     // Should try and fetch
@@ -525,32 +525,36 @@ describe('JWT Auth', () => {
       }
     });
 
-    currentResponse = Promise.resolve({
-      errors: [],
-      keys: [await KeySpec.importKey(publicKeyRSA)]
-    });
+    const generateResponse = async () => {
+      const importedKey = await KeySpec.importKey(publicKeyRSA);
+      return {
+        errors: [],
+        keymap: { [publicKeyRSA.kid!]: importedKey },
+        keys: []
+      };
+    };
 
-    let key = (await cached.getKeys()).keys[0];
-    expect(key.kid).toEqual(publicKeyRSA.kid!);
+    currentResponse = generateResponse();
+
+    expect((await cached.getKeys()).keymap[publicKeyRSA.kid!]).not.toBeUndefined();
 
     currentResponse = undefined as any;
 
-    key = (await cached.getKeys()).keys[0];
-    expect(key.kid).toEqual(publicKeyRSA.kid!);
+    expect((await cached.getKeys()).keymap[publicKeyRSA.kid!]).not.toBeUndefined();
 
     cached.addTimeForTests(301_000);
     currentResponse = Promise.reject(new Error('refresh failed'));
 
     // Uses the promise, refreshes in the background
     let response = await cached.getKeys();
-    expect(response.keys[0].kid).toEqual(publicKeyRSA.kid!);
+    expect(response.keymap[publicKeyRSA.kid!]).not.toBeUndefined();
     expect(response.errors).toEqual([]);
 
     // Wait for refresh to finish
     await cached.addTimeForTests(0);
     response = await cached.getKeys();
     // Still have the cached key, but also have the error
-    expect(response.keys[0].kid).toEqual(publicKeyRSA.kid!);
+    expect(response.keymap[publicKeyRSA.kid!]).not.toBeUndefined();
     expect(response.errors[0].message).toMatch('[PSYNC_S2201] refresh failed');
 
     await cached.addTimeForTests(3601_000);
@@ -558,17 +562,14 @@ describe('JWT Auth', () => {
 
     // Now the keys have expired, and the request still fails
     expect(response.keys).toEqual([]);
+    expect(response.keymap).toEqual({});
     expect(response.errors[0].message).toMatch('[PSYNC_S2201] refresh failed');
 
-    currentResponse = Promise.resolve({
-      errors: [],
-      keys: [await KeySpec.importKey(publicKeyRSA)]
-    });
+    currentResponse = generateResponse();
 
     // After a delay, we can refresh again
     await cached.addTimeForTests(30_000);
-    key = (await cached.getKeys()).keys[0];
-    expect(key.kid).toEqual(publicKeyRSA.kid!);
+    expect((await cached.getKeys()).keymap[publicKeyRSA.kid!]).not.toBeUndefined();
   });
 
   test('signing with EdDSA', async () => {

@@ -24,4 +24,5 @@ export interface KeyCollector {
 export interface KeyResult {
   errors: AuthorizationError[];
   keys: KeySpec[];
+  keymap: Record<string, KeySpec>;
 }

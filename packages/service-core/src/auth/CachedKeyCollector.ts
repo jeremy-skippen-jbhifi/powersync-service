@@ -18,6 +18,7 @@ import { mapAuthConfigError } from './utils.js';
 
 export class CachedKeyCollector implements KeyCollector {
   private currentKeys: KeySpec[] = [];
+  private currentKeymap: Record<string, KeySpec> = {};
   /**
    * The time that currentKeys was set.
    */
@@ -55,6 +56,7 @@ export class CachedKeyCollector implements KeyCollector {
     if (now - this.keyTimestamp > this.keyExpiry) {
       // Keys have expired - clear
       this.currentKeys = [];
+      this.currentKeymap = {};
     }
 
     if (this.wantsRefresh()) {
@@ -79,14 +81,14 @@ export class CachedKeyCollector implements KeyCollector {
         await Promise.race([this.refreshPromise, timeout]);
       } catch (e) {
         if (e instanceof AuthorizationError) {
-          return { keys: this.currentKeys, errors: [...this.currentErrors, e] };
+          return { keys: this.currentKeys, keymap: this.currentKeymap, errors: [...this.currentErrors, e] };
         } else {
           throw e;
         }
       }
     }
 
-    return { keys: this.currentKeys, errors: this.currentErrors };
+    return { keys: this.currentKeys, keymap: this.currentKeymap, errors: this.currentErrors };
   }
 
   private refresh() {
@@ -108,9 +110,10 @@ export class CachedKeyCollector implements KeyCollector {
 
   private async refreshInner() {
     try {
-      const { keys, errors } = await this.source.getKeys();
+      const { keys, keymap, errors } = await this.source.getKeys();
       // Partial or full result
       this.currentKeys = keys;
+      this.currentKeymap = keymap;
       this.currentErrors = errors;
       this.keyTimestamp = Date.now();
       this.error = false;

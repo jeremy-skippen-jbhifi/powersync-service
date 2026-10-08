@@ -8,14 +8,25 @@ import { KeySpec } from './KeySpec.js';
  * A key can be added both with and without a kid, in case wildcard matching is desired.
  */
 export class StaticKeyCollector implements KeyCollector {
+  private keys: KeySpec[] = [];
+  private keymap: Record<string, KeySpec> = {};
+
   static async importKeys(keys: jose.JWK[]) {
     const parsedKeys = await Promise.all(keys.map((key) => KeySpec.importKey(key)));
     return new StaticKeyCollector(parsedKeys);
   }
 
-  constructor(private keys: KeySpec[]) {}
+  constructor(keys: KeySpec[]) {
+    for (let key of keys) {
+      if (typeof key.kid === 'string') {
+        this.keymap[key.kid] = key;
+      } else {
+        this.keys.push(key);
+      }
+    }
+  }
 
   async getKeys(): Promise<KeyResult> {
-    return { keys: this.keys, errors: [] };
+    return { keys: this.keys, keymap: this.keymap, errors: [] };
   }
 }
