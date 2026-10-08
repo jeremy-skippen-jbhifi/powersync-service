@@ -8,8 +8,9 @@ import { KeySpec } from './KeySpec.js';
  * A key can be added both with and without a kid, in case wildcard matching is desired.
  */
 export class StaticKeyCollector implements KeyCollector {
-  private keys: KeySpec[] = [];
   private keymap: Map<string, KeySpec> = new Map();
+  private wildcardKeys: KeySpec[] = [];
+  private duplicateOrInvalidKeys: KeySpec[] = [];
 
   static async importKeys(keys: jose.JWK[]) {
     const parsedKeys = await Promise.all(keys.map((key) => KeySpec.importKey(key)));
@@ -19,14 +20,25 @@ export class StaticKeyCollector implements KeyCollector {
   constructor(keys: KeySpec[]) {
     for (let key of keys) {
       if (typeof key.kid === 'string') {
-        this.keymap.set(key.kid, key);
+        if (!this.keymap.has(key.kid)) {
+          this.keymap.set(key.kid, key);
+        } else {
+          this.duplicateOrInvalidKeys.push(key);
+        }
+      } else if (key.kid === null || key.kid === undefined) {
+        this.wildcardKeys.push(key);
       } else {
-        this.keys.push(key);
+        this.duplicateOrInvalidKeys.push(key);
       }
     }
   }
 
   async getKeys(): Promise<KeyResult> {
-    return { keys: this.keys, getKeyById: Map.prototype.get.bind(this.keymap), errors: [] };
+    return {
+      errors: [],
+      getKeyById: Map.prototype.get.bind(this.keymap),
+      wildcardKeys: this.wildcardKeys,
+      allKeys: () => [...this.keymap.values(), ...this.wildcardKeys, ...this.duplicateOrInvalidKeys]
+    };
   }
 }

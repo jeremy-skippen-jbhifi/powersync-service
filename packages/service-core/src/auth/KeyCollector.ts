@@ -23,6 +23,7 @@ export interface KeyCollector {
 
 export interface KeyResult {
   errors: AuthorizationError[];
-  keys: KeySpec[];
   getKeyById: (kid: string) => KeySpec | undefined;
+  wildcardKeys: KeySpec[];
+  allKeys: () => KeySpec[];
 }

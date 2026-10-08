@@ -99,18 +99,20 @@ export class RemoteJWKSCollector implements KeyCollector {
       !(data.keys as any[]).every((key) => typeof key == 'object' && !Array.isArray(key))
     ) {
       return {
-        keys: [],
-        getKeyById: () => undefined,
         errors: [
           new AuthorizationError(ErrorCode.PSYNC_S2204, `Invalid JWKS response`, {
             configurationDetails: `JWKS URL: ${this.url}. Response:\n${JSON.stringify(data, null, 2)}`
           })
-        ]
+        ],
+        getKeyById: () => undefined,
+        wildcardKeys: [],
+        allKeys: () => []
       };
     }
 
-    const keys: KeySpec[] = [];
     const keymap: Map<string, KeySpec> = new Map();
+    const wildcardKeys: KeySpec[] = [];
+    const duplicateOrInvalidKeys: KeySpec[] = [];
     for (let keyData of data.keys) {
       if (keyData.kty != 'RSA' && keyData.kty != 'OKP' && keyData.kty != 'EC') {
         // HS (oct) keys not allowed because they are symmetric
@@ -130,16 +132,23 @@ export class RemoteJWKSCollector implements KeyCollector {
 
       const key = await KeySpec.importKey(keyData, this.keyOptions);
       if (typeof key.kid === 'string') {
-        keymap.set(key.kid, key);
+        if (!keymap.has(key.kid)) {
+          keymap.set(key.kid, key);
+        } else {
+          duplicateOrInvalidKeys.push(key);
+        }
+      } else if (key.kid === null || key.kid === undefined) {
+        wildcardKeys.push(key);
       } else {
-        keys.push(key);
+        duplicateOrInvalidKeys.push(key);
       }
     }
 
     return {
-      keys,
+      errors: [],
       getKeyById: Map.prototype.get.bind(keymap),
-      errors: []
+      wildcardKeys,
+      allKeys: () => [...keymap.values(), ...wildcardKeys, ...duplicateOrInvalidKeys]
     };
   }
 

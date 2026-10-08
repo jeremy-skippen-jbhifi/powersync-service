@@ -145,7 +145,7 @@ export class KeyStore<Collector extends KeyCollector = KeyCollector> {
 
   private async getCachedKey(token: string, header: jose.JWTHeaderParameters): Promise<KeySpec> {
     const kid = header.kid;
-    const { keys, errors, getKeyById } = await this.collector.getKeys();
+    const { errors, getKeyById, wildcardKeys, allKeys } = await this.collector.getKeys();
     if (kid) {
       // key has kid: JWK with exact kid, or JWK without kid
       // key without kid: JWK without kid only
@@ -161,7 +161,7 @@ export class KeyStore<Collector extends KeyCollector = KeyCollector> {
       }
     }
 
-    for (let key of keys) {
+    for (let key of wildcardKeys) {
       // Checks signature and algorithm
       if (!key.matchesAlgorithm(header.alg)) {
         continue;
@@ -183,7 +183,7 @@ export class KeyStore<Collector extends KeyCollector = KeyCollector> {
         logger.error(`Failed to refresh keys`, e);
       });
 
-      const details = debugKeyNotFound(this, keys, token);
+      const details = debugKeyNotFound(this, allKeys(), token);
 
       throw new AuthorizationError(
         ErrorCode.PSYNC_S2101,
