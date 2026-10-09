@@ -13,6 +13,7 @@ import {
 } from '@powersync/lib-services-framework';
 import { KeyCollector, KeyResult } from './KeyCollector.js';
 import { KeyOptions, KeySpec } from './KeySpec.js';
+import { getWildcardKeyFactory } from './utils.js';
 
 export type RemoteJWKSCollectorOptions = {
   lookupOptions?: LookupOptions;
@@ -99,16 +100,20 @@ export class RemoteJWKSCollector implements KeyCollector {
       !(data.keys as any[]).every((key) => typeof key == 'object' && !Array.isArray(key))
     ) {
       return {
-        keys: [],
         errors: [
           new AuthorizationError(ErrorCode.PSYNC_S2204, `Invalid JWKS response`, {
             configurationDetails: `JWKS URL: ${this.url}. Response:\n${JSON.stringify(data, null, 2)}`
           })
-        ]
+        ],
+        getKeyById: () => undefined,
+        getWildcardKey: () => Promise.resolve(undefined),
+        allKeys: () => []
       };
     }
 
-    let keys: KeySpec[] = [];
+    const keymap: Map<string, KeySpec> = new Map();
+    const wildcardKeys: KeySpec[] = [];
+    const duplicateOrInvalidKeys: KeySpec[] = [];
     for (let keyData of data.keys) {
       if (keyData.kty != 'RSA' && keyData.kty != 'OKP' && keyData.kty != 'EC') {
         // HS (oct) keys not allowed because they are symmetric
@@ -127,10 +132,25 @@ export class RemoteJWKSCollector implements KeyCollector {
       }
 
       const key = await KeySpec.importKey(keyData, this.keyOptions);
-      keys.push(key);
+      if (typeof key.kid === 'string') {
+        if (!keymap.has(key.kid)) {
+          keymap.set(key.kid, key);
+        } else {
+          duplicateOrInvalidKeys.push(key);
+        }
+      } else if (key.kid === null || key.kid === undefined) {
+        wildcardKeys.push(key);
+      } else {
+        duplicateOrInvalidKeys.push(key);
+      }
     }
 
-    return { keys: keys, errors: [] };
+    return {
+      errors: [],
+      getKeyById: Map.prototype.get.bind(keymap),
+      getWildcardKey: getWildcardKeyFactory(wildcardKeys),
+      allKeys: () => [...keymap.values(), ...wildcardKeys, ...duplicateOrInvalidKeys]
+    };
   }
 
   /**

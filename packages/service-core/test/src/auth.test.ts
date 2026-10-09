@@ -1,8 +1,9 @@
 import { StaticSupabaseKeyCollector } from '@/index.js';
 import { configFile } from '@powersync/service-types';
 import * as jose from 'jose';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { CachedKeyCollector } from '../../src/auth/CachedKeyCollector.js';
+import { CompoundKeyCollector } from '../../src/auth/CompoundKeyCollector.js';
 import { KeyResult } from '../../src/auth/KeyCollector.js';
 import {
   EC_ALGORITHMS,
@@ -463,9 +464,9 @@ describe('JWT Auth', () => {
     const remote = new RemoteJWKSCollector(
       'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com'
     );
-    const { keys, errors } = await remote.getKeys();
+    const { errors, allKeys } = await remote.getKeys();
     expect(errors).toEqual([]);
-    expect(keys.length).toBeGreaterThanOrEqual(1);
+    expect(allKeys().length).toBeGreaterThan(0);
 
     // Domain names are resolved when retrieving keys
     const invalid = new RemoteJWKSCollector('https://localhost/.well-known/jwks.json', {
@@ -503,9 +504,9 @@ describe('JWT Auth', () => {
     const remote = new RemoteJWKSCollector(
       'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com'
     );
-    const { keys, errors } = await remote.getKeys();
+    const { errors, allKeys } = await remote.getKeys();
     expect(errors).toEqual([]);
-    expect(keys.length).toBeGreaterThanOrEqual(1);
+    expect(allKeys().length).toBeGreaterThan(0);
 
     const invalid = new RemoteJWKSCollector('https://127.0.0.1/.well-known/jwks.json');
     // Should try and fetch
@@ -525,50 +526,154 @@ describe('JWT Auth', () => {
       }
     });
 
-    currentResponse = Promise.resolve({
-      errors: [],
-      keys: [await KeySpec.importKey(publicKeyRSA)]
-    });
+    const generateResponse = async () => {
+      const importedKey = await KeySpec.importKey(publicKeyRSA);
+      return {
+        errors: [],
+        getKeyById: (kid: string) => {
+          if (kid === publicKeyRSA.kid) {
+            return importedKey;
+          }
+          return undefined;
+        },
+        getWildcardKey: () => Promise.resolve(undefined),
+        allKeys: () => [importedKey]
+      };
+    };
 
-    let key = (await cached.getKeys()).keys[0];
-    expect(key.kid).toEqual(publicKeyRSA.kid!);
+    currentResponse = generateResponse();
+
+    let response = await cached.getKeys();
+    expect(response.getKeyById(publicKeyRSA.kid!)).not.toBeUndefined();
 
     currentResponse = undefined as any;
 
-    key = (await cached.getKeys()).keys[0];
-    expect(key.kid).toEqual(publicKeyRSA.kid!);
+    response = await cached.getKeys();
+    expect(response.getKeyById(publicKeyRSA.kid!)).not.toBeUndefined();
 
     cached.addTimeForTests(301_000);
     currentResponse = Promise.reject(new Error('refresh failed'));
 
     // Uses the promise, refreshes in the background
-    let response = await cached.getKeys();
-    expect(response.keys[0].kid).toEqual(publicKeyRSA.kid!);
+    response = await cached.getKeys();
+    expect(response.getKeyById(publicKeyRSA.kid!)).not.toBeUndefined();
     expect(response.errors).toEqual([]);
 
     // Wait for refresh to finish
     await cached.addTimeForTests(0);
     response = await cached.getKeys();
     // Still have the cached key, but also have the error
-    expect(response.keys[0].kid).toEqual(publicKeyRSA.kid!);
+    expect(response.getKeyById(publicKeyRSA.kid!)).not.toBeUndefined();
     expect(response.errors[0].message).toMatch('[PSYNC_S2201] refresh failed');
 
     await cached.addTimeForTests(3601_000);
     response = await cached.getKeys();
 
     // Now the keys have expired, and the request still fails
-    expect(response.keys).toEqual([]);
+    expect(response.allKeys()).toEqual([]);
+    expect(response.getKeyById(publicKeyRSA.kid!)).toBeUndefined();
     expect(response.errors[0].message).toMatch('[PSYNC_S2201] refresh failed');
 
-    currentResponse = Promise.resolve({
-      errors: [],
-      keys: [await KeySpec.importKey(publicKeyRSA)]
-    });
+    currentResponse = generateResponse();
 
     // After a delay, we can refresh again
     await cached.addTimeForTests(30_000);
-    key = (await cached.getKeys()).keys[0];
-    expect(key.kid).toEqual(publicKeyRSA.kid!);
+    response = await cached.getKeys();
+    expect(response.getKeyById(publicKeyRSA.kid!)).not.toBeUndefined();
+  });
+
+  describe('lazy wildcard caching', () => {
+    const wildcardKeyA = { ...sharedKey, kid: undefined };
+    const verifyOptions = { defaultAudiences: ['tests'], maxAge: '6m' };
+
+    async function signWildcardToken(key: jose.JWK) {
+      return new jose.SignJWT({})
+        .setProtectedHeader({ alg: 'HS256', kid: 'unknown' })
+        .setSubject('f1')
+        .setIssuedAt()
+        .setAudience('tests')
+        .setExpirationTime('5m')
+        .sign(await jose.importJWK(key));
+    }
+
+    test('wildcard lookup is callable without a receiver and enforces its selection contract', async () => {
+      const token = await signWildcardToken(wildcardKeyA);
+      const collector = await StaticKeyCollector.importKeys([sharedKey, sharedKey2, wildcardKeyA]);
+      const { getWildcardKey } = await collector.getKeys();
+
+      // The named key is ineligible and the first wildcard has the wrong signature.
+      expect((await getWildcardKey('HS256', token))?.source).toEqual(wildcardKeyA);
+      expect(await getWildcardKey('HS512', token)).toBeUndefined();
+      await expect(getWildcardKey('HS256', 'malformed')).rejects.toBeInstanceOf(jose.errors.JWSInvalid);
+
+      const namedOnly = await StaticKeyCollector.importKeys([sharedKey]);
+      expect(await (await namedOnly.getKeys()).getWildcardKey('HS256', token)).toBeUndefined();
+    });
+
+    test('replaces wildcard lookup on refresh and clears it after an empty refresh', async () => {
+      let source = await StaticKeyCollector.importKeys([wildcardKeyA]);
+      const cached = new CachedKeyCollector({ getKeys: () => source.getKeys() });
+      const store = new KeyStore(new CompoundKeyCollector([new StaticKeyCollector([]), cached]));
+      const tokenA = await signWildcardToken(wildcardKeyA);
+      const tokenB = await signWildcardToken(sharedKey2);
+
+      expect((await store.verifyJwt(tokenA, verifyOptions)).userIdString).toEqual('f1');
+
+      source = await StaticKeyCollector.importKeys([sharedKey2]);
+      await cached.addTimeForTests(301_000);
+      // The request that starts the background refresh can still use the old key.
+      expect((await store.verifyJwt(tokenA, verifyOptions)).userIdString).toEqual('f1');
+      await cached.addTimeForTests(0);
+
+      let response = await cached.getKeys();
+      const { getWildcardKey } = response;
+      expect(await getWildcardKey('HS256', tokenA)).toBeUndefined();
+      expect((await getWildcardKey('HS256', tokenB))?.source).toEqual(sharedKey2);
+      expect(response.allKeys().map((key) => key.source)).toEqual([sharedKey2]);
+      expect((await store.verifyJwt(tokenB, verifyOptions)).userIdString).toEqual('f1');
+      await expect(store.verifyJwt(tokenA, verifyOptions)).rejects.toThrow('Could not find an appropriate key');
+
+      source = await StaticKeyCollector.importKeys([]);
+      await cached.addTimeForTests(301_000);
+      expect((await store.verifyJwt(tokenB, verifyOptions)).userIdString).toEqual('f1');
+      await cached.addTimeForTests(0);
+
+      response = await cached.getKeys();
+      expect(await response.getWildcardKey('HS256', tokenA)).toBeUndefined();
+      expect(await response.getWildcardKey('HS256', tokenB)).toBeUndefined();
+      expect(response.allKeys()).toEqual([]);
+      await expect(store.verifyJwt(tokenB, verifyOptions)).rejects.toThrow('Could not find an appropriate key');
+    });
+
+    test('retains a wildcard on failed refresh but cannot use it after cache expiry', async () => {
+      const source = await StaticKeyCollector.importKeys([wildcardKeyA]);
+      const cached = new CachedKeyCollector(source);
+      const store = new KeyStore(new CompoundKeyCollector([cached]));
+      const token = await signWildcardToken(wildcardKeyA);
+
+      expect((await store.verifyJwt(token, verifyOptions)).userIdString).toEqual('f1');
+      const refresh = vi.spyOn(source, 'getKeys').mockRejectedValue(new Error('refresh failed'));
+      try {
+        await cached.addTimeForTests(301_000);
+        expect((await store.verifyJwt(token, verifyOptions)).userIdString).toEqual('f1');
+        await cached.addTimeForTests(0);
+
+        let response = await cached.getKeys();
+        expect((await response.getWildcardKey('HS256', token))?.source).toEqual(wildcardKeyA);
+        expect(response.allKeys().map((key) => key.source)).toEqual([wildcardKeyA]);
+        expect(response.errors[0].message).toMatch('[PSYNC_S2201] refresh failed');
+        expect((await store.verifyJwt(token, verifyOptions)).userIdString).toEqual('f1');
+
+        await cached.addTimeForTests(3601_000);
+        response = await cached.getKeys();
+        expect(await response.getWildcardKey('HS256', token)).toBeUndefined();
+        expect(response.allKeys()).toEqual([]);
+        expect(response.errors[0].message).toMatch('[PSYNC_S2201] refresh failed');
+        await expect(store.verifyJwt(token, verifyOptions)).rejects.toThrow('[PSYNC_S2201] refresh failed');
+      } finally {
+        refresh.mockRestore();
+      }
+    });
   });
 
   test('signing with EdDSA', async () => {

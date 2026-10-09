@@ -5,6 +5,10 @@ import { KeySpec } from './KeySpec.js';
 import { LeakyBucket } from './LeakyBucket.js';
 import { mapAuthConfigError } from './utils.js';
 
+const nullGetKeyByIdFn: (kid: string) => KeySpec | undefined = () => undefined;
+const nullGetWildcardKeyFn: (alg: string, token: string) => Promise<KeySpec | undefined> = () =>
+  Promise.resolve(undefined);
+
 /**
  * Manages caching and refreshing for a key collector.
  *
@@ -17,7 +21,9 @@ import { mapAuthConfigError } from './utils.js';
  */
 
 export class CachedKeyCollector implements KeyCollector {
-  private currentKeys: KeySpec[] = [];
+  private currentGetKeyByIdFn: (kid: string) => KeySpec | undefined = nullGetKeyByIdFn;
+  private currentGetWildcardKeyFn: (alg: string, token: string) => Promise<KeySpec | undefined> = nullGetWildcardKeyFn;
+  private currentAllKeysFn: () => KeySpec[] = () => [];
   /**
    * The time that currentKeys was set.
    */
@@ -54,7 +60,9 @@ export class CachedKeyCollector implements KeyCollector {
     const now = Date.now();
     if (now - this.keyTimestamp > this.keyExpiry) {
       // Keys have expired - clear
-      this.currentKeys = [];
+      this.currentGetKeyByIdFn = nullGetKeyByIdFn;
+      this.currentGetWildcardKeyFn = nullGetWildcardKeyFn;
+      this.currentAllKeysFn = () => [];
     }
 
     if (this.wantsRefresh()) {
@@ -79,14 +87,24 @@ export class CachedKeyCollector implements KeyCollector {
         await Promise.race([this.refreshPromise, timeout]);
       } catch (e) {
         if (e instanceof AuthorizationError) {
-          return { keys: this.currentKeys, errors: [...this.currentErrors, e] };
+          return {
+            errors: [...this.currentErrors, e],
+            getKeyById: this.currentGetKeyByIdFn,
+            getWildcardKey: this.currentGetWildcardKeyFn,
+            allKeys: this.currentAllKeysFn
+          };
         } else {
           throw e;
         }
       }
     }
 
-    return { keys: this.currentKeys, errors: this.currentErrors };
+    return {
+      errors: this.currentErrors,
+      getKeyById: this.currentGetKeyByIdFn,
+      getWildcardKey: this.currentGetWildcardKeyFn,
+      allKeys: this.currentAllKeysFn
+    };
   }
 
   private refresh() {
@@ -108,10 +126,12 @@ export class CachedKeyCollector implements KeyCollector {
 
   private async refreshInner() {
     try {
-      const { keys, errors } = await this.source.getKeys();
+      const { errors, getKeyById, getWildcardKey, allKeys } = await this.source.getKeys();
       // Partial or full result
-      this.currentKeys = keys;
       this.currentErrors = errors;
+      this.currentGetKeyByIdFn = getKeyById;
+      this.currentGetWildcardKeyFn = getWildcardKey;
+      this.currentAllKeysFn = allKeys;
       this.keyTimestamp = Date.now();
       this.error = false;
 
