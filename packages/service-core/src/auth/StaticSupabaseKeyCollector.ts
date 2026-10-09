@@ -1,6 +1,7 @@
 import * as jose from 'jose';
 import { KeyCollector, KeyResult } from './KeyCollector.js';
 import { KeyOptions, KeySpec } from './KeySpec.js';
+import { getWildcardKeyFactory } from './utils.js';
 
 export const SUPABASE_KEY_OPTIONS: KeyOptions = {
   requiresAudience: ['authenticated'],
@@ -47,7 +48,7 @@ export class StaticSupabaseKeyCollector implements KeyCollector {
     return {
       errors: [],
       getKeyById: Map.prototype.get.bind(this.keymap),
-      wildcardKeys: this.wildcardKeys,
+      getWildcardKey: getWildcardKeyFactory(this.wildcardKeys),
       allKeys: () => [...this.keymap.values(), ...this.wildcardKeys, ...this.duplicateOrInvalidKeys]
     };
   }

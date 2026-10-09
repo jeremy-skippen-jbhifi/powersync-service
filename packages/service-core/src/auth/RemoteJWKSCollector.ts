@@ -13,6 +13,7 @@ import {
 } from '@powersync/lib-services-framework';
 import { KeyCollector, KeyResult } from './KeyCollector.js';
 import { KeyOptions, KeySpec } from './KeySpec.js';
+import { getWildcardKeyFactory } from './utils.js';
 
 export type RemoteJWKSCollectorOptions = {
   lookupOptions?: LookupOptions;
@@ -105,7 +106,7 @@ export class RemoteJWKSCollector implements KeyCollector {
           })
         ],
         getKeyById: () => undefined,
-        wildcardKeys: [],
+        getWildcardKey: () => Promise.resolve(undefined),
         allKeys: () => []
       };
     }
@@ -147,7 +148,7 @@ export class RemoteJWKSCollector implements KeyCollector {
     return {
       errors: [],
       getKeyById: Map.prototype.get.bind(keymap),
-      wildcardKeys,
+      getWildcardKey: getWildcardKeyFactory(wildcardKeys),
       allKeys: () => [...keymap.values(), ...wildcardKeys, ...duplicateOrInvalidKeys]
     };
   }

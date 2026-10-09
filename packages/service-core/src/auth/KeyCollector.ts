@@ -23,7 +23,20 @@ export interface KeyCollector {
 
 export interface KeyResult {
   errors: AuthorizationError[];
+  /**
+   * Return the first named key matching the ID, without signature verification.
+   */
   getKeyById: (kid: string) => KeySpec | undefined;
-  wildcardKeys: KeySpec[];
+  /**
+   * Lazily select the first wildcard key compatible with the algorithm and whose
+   * signature verifies the token.
+   *
+   * Named keys are not considered here.
+   */
+  getWildcardKey: (alg: string, token: string) => Promise<KeySpec | undefined>;
+  /**
+   * Lazily enumerate all imported keys, including duplicates and malformed IDs,
+   * for diagnostics.
+   */
   allKeys: () => KeySpec[];
 }

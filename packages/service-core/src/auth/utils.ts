@@ -151,6 +151,21 @@ export function getSupabaseJwksUrl(
   return { projectId, hostname, url: `https://${projectId}.supabase.co/auth/v1/.well-known/jwks.json` };
 }
 
+export const getWildcardKeyFactory = (wildcardKeys: KeySpec[]) => async (alg: string, token: string) => {
+  for (let key of wildcardKeys) {
+    // Checks signature and algorithm
+    if (!key.matchesAlgorithm(alg)) {
+      continue;
+    }
+
+    if (await key.isValidSignature(token)) {
+      return key;
+    }
+  }
+
+  return undefined;
+};
+
 export function debugKeyNotFound(
   keyStore: KeyStore,
   keys: KeySpec[],

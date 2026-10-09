@@ -1,6 +1,7 @@
 import * as jose from 'jose';
 import { KeyCollector, KeyResult } from './KeyCollector.js';
 import { KeySpec } from './KeySpec.js';
+import { getWildcardKeyFactory } from './utils.js';
 
 /**
  * Set of static keys.
@@ -37,7 +38,7 @@ export class StaticKeyCollector implements KeyCollector {
     return {
       errors: [],
       getKeyById: Map.prototype.get.bind(this.keymap),
-      wildcardKeys: this.wildcardKeys,
+      getWildcardKey: getWildcardKeyFactory(this.wildcardKeys),
       allKeys: () => [...this.keymap.values(), ...this.wildcardKeys, ...this.duplicateOrInvalidKeys]
     };
   }

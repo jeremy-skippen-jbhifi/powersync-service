@@ -144,32 +144,26 @@ export class KeyStore<Collector extends KeyCollector = KeyCollector> {
   }
 
   private async getCachedKey(token: string, header: jose.JWTHeaderParameters): Promise<KeySpec> {
+    const { errors, getKeyById, getWildcardKey, allKeys } = await this.collector.getKeys();
     const kid = header.kid;
-    const { errors, getKeyById, wildcardKeys, allKeys } = await this.collector.getKeys();
     if (kid) {
       // key has kid: JWK with exact kid, or JWK without kid
       // key without kid: JWK without kid only
-      const key = getKeyById(kid);
-      if (key) {
-        if (!key.matchesAlgorithm(header.alg)) {
+      const namedKey = getKeyById(kid);
+      if (namedKey) {
+        if (!namedKey.matchesAlgorithm(header.alg)) {
           throw new AuthorizationError(ErrorCode.PSYNC_S2101, `Unexpected token algorithm ${header.alg}`, {
-            configurationDetails: `Key kid: ${key.source.kid}, alg: ${key.source.alg}, kty: ${key.source.kty}`
+            configurationDetails: `Key kid: ${namedKey.source.kid}, alg: ${namedKey.source.alg}, kty: ${namedKey.source.kty}`
             // tokenDetails automatically populated higher up the stack
           });
         }
-        return key;
+        return namedKey;
       }
     }
 
-    for (let key of wildcardKeys) {
-      // Checks signature and algorithm
-      if (!key.matchesAlgorithm(header.alg)) {
-        continue;
-      }
-
-      if (await key.isValidSignature(token)) {
-        return key;
-      }
+    const wildcardKey = await getWildcardKey(header.alg, token);
+    if (wildcardKey) {
+      return wildcardKey;
     }
 
     if (errors.length > 0) {

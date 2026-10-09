@@ -16,13 +16,13 @@ export class CompoundKeyCollector implements KeyCollector {
   async getKeys(): Promise<KeyResult> {
     const errors: AuthorizationError[] = [];
     const getKeyByIdFns: Array<(kid: string) => KeySpec | undefined> = [];
-    const wildcardKeys: KeySpec[] = [];
+    const getWildcardKeyFns: Array<(alg: string, token: string) => Promise<KeySpec | undefined>> = [];
     const allKeyFns: Array<() => KeySpec[]> = [];
     const promises = this.collectors.map((collector) =>
       collector.getKeys().then((result) => {
         errors.push(...result.errors);
         getKeyByIdFns.push(result.getKeyById);
-        wildcardKeys.push(...result.wildcardKeys);
+        getWildcardKeyFns.push(result.getWildcardKey);
         allKeyFns.push(result.allKeys);
       })
     );
@@ -38,7 +38,15 @@ export class CompoundKeyCollector implements KeyCollector {
         }
         return undefined;
       },
-      wildcardKeys,
+      async getWildcardKey(alg, token) {
+        for (let fn of getWildcardKeyFns) {
+          const key = await fn(alg, token);
+          if (key) {
+            return key;
+          }
+        }
+        return undefined;
+      },
       allKeys: () => allKeyFns.flatMap((fn) => fn())
     };
   }
